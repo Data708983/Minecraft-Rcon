@@ -53,8 +53,16 @@ class MCRcon(object):
         return self
 
     def connect(self):
-        self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
+        #判断端口存活
+        self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        status = self.socket.connect_ex((self.host, self.port))
+        self.socket.close()
+        self.socket=None
+        if status != 0:
+	        raise TypeError('this port is not OK') 
+
+        self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         # 打开 TLS
         if self.tlsmode > 0:
             ctx = ssl.create_default_context()
@@ -117,3 +125,6 @@ class MCRcon(object):
         result = self._send(2, command)
         time.sleep(0.003) # MC-72390 （非线程安全的解决办法）
         return result
+
+    
+
