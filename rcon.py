@@ -3,13 +3,18 @@ import ssl
 import select
 import struct
 import time
+
+
 #导入模块
 
 class MCRconException(Exception):
     pass
 
+class MCRconTimeoutException(MCRconException):
+    pass  # 定义一个新的超时异常类
 
-class MCRcon(object):	
+
+class MCRcon(object):
     """Minecraft服务端远程命令（RCON）模板
 
 	老咩友情提醒您：
@@ -18,78 +23,100 @@ class MCRcon(object):
 		写码不规范，
 		维护两行泪。
 
-    推荐你使用python的'with'语句！
-    这样可以确保及时的关闭连接，而不是被遗漏。
+	推荐你使用python的'with'语句！
+	这样可以确保及时的关闭连接，而不是被遗漏。
 
-    'with'语句例子:
-    In [1]: from mcrcon import MCRcon
-    In [2]: with MCRcon("这是一个ip", "这是rcon的密码","这是Rcon的端口" ) as mcr:
-       ...:     resp = mcr.command("/发送给服务端的指令")
-       ...:     print(resp) #输出
+	'with'语句例子:
+	In [1]: from mcrcon import MCRcon
+	In [2]: with MCRcon("这是一个ip", "这是rcon的密码","这是Rcon的端口" ) as mcr:
+	   ...:     resp = mcr.command("/发送给服务端的指令")
+	   ...:     print(resp) #输出
 
 	
 	两行泪方式:
 	你当然也可以不用python的'with'语句，但是一定要在建立连接后，及时的断开连接。
-    In [3]: mcr = MCRcon("这是一个ip", "这是rcon的密码","这是Rcon的端口" )
-    In [4]: mcr.connect() #连接建立
-    In [5]: resp = mcr.command("/发送给服务端的指令")
-    In [6]: print(resp) #输出
-    In [7]: mcr.disconnect() #断开连接
-    """
+	In [3]: mcr = MCRcon("这是一个ip", "这是rcon的密码","这是Rcon的端口" )
+	In [4]: mcr.connect() #连接建立
+	In [5]: resp = mcr.command("/发送给服务端的指令")
+	In [6]: print(resp) #输出
+	In [7]: mcr.disconnect() #断开连接
+	"""
+
     socket = None
 
-	#重写init方法
-    def __init__(self, host, password, port, tlsmode=0):
+    #重写init方法
+    def __init__(self, host, password, port, timeout=5, tlsmode=0):
         self.host = host
         self.password = password
         self.port = port
         self.tlsmode = tlsmode
+        self.timeout = timeout
 
     def __exit__(self, type, value, tb):
         self.disconnect()
-		
+
     def __enter__(self):
         self.connect()
         return self
 
     def connect(self):
 
+        self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.socket.settimeout(self.timeout)
+
         #判断端口存活
-        self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        status = self.socket.connect_ex((self.host, self.port))
-        self.socket.close()
-        self.socket=None
-        if status != 0:
-	        raise TypeError('this port is not OK') 
+        try:
+            self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            status = self.socket.connect_ex((self.host, self.port))
+            self.socket.close()
+            self.socket = None
+            if status != 0:
+                raise MCRconException('Port Invalid!')
 
-        self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        # 打开 TLS
-        if self.tlsmode > 0:
-            ctx = ssl.create_default_context()
+            self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            # 打开 TLS
+            if self.tlsmode > 0:
+                ctx = ssl.create_default_context()
 
-            # 禁用主机名和证书验证
-            if self.tlsmode > 1:
-                ctx.check_hostname = False
-                ctx.verify_mode = ssl.CERT_NONE
+                # 禁用主机名和证书验证
+                if self.tlsmode > 1:
+                    ctx.check_hostname = False
+                    ctx.verify_mode = ssl.CERT_NONE
 
-            self.socket = ctx.wrap_socket(self.socket, server_hostname=self.host)
+                self.socket = ctx.wrap_socket(self.socket, server_hostname=self.host)
 
-        self.socket.connect((self.host, self.port))
-        self._send(3, self.password)
+            self.socket.connect((self.host, self.port))
 
+            self._send(3, self.password)
 
+        except socket.timeout:
+            raise MCRconTimeoutException(f"连接到 {self.host}:{self.port} 超时")
+        except Exception as e:
+            self.socket.close()
+            self.socket = None
+            raise e
 
     def _read(self, length):
+
         data = b""
+        start_time = time.time()
+
+        #超时处理
         while len(data) < length:
+            if time.time() - start_time > self.timeout:
+                raise MCRconTimeoutException(f"读取数据超时，已等待超过 {self.timeout} 秒")
             data += self.socket.recv(length - len(data))
+
+        # while len(data) < length:
+        #     data += self.socket.recv(length - len(data))
+
         return data
-		
+
     def disconnect(self):
         if self.socket is not None:
             self.socket.close()
             self.socket = None
-			
+
     def _send(self, out_type, out_data):
         if self.socket is None:
             raise MCRconException("发送前必须连接！")
@@ -101,7 +128,13 @@ class MCRcon(object):
 
         # 读取响应包
         in_data = ""
+        start_time = time.time()
+
         while True:
+
+            if time.time() - start_time > self.timeout:
+                raise MCRconTimeoutException(f"发送请求并等待响应超时，已等待超过 {self.timeout} 秒")
+
             # 读取数据包
             in_length, = struct.unpack('<i', self._read(4))
             in_payload = self._read(in_length)
@@ -114,17 +147,12 @@ class MCRcon(object):
             if in_id == -1:
                 raise MCRconException("登录rcon协议失败")
 
-            
             in_data += in_data_partial.decode('utf8')
-
 
             if len(select.select([self.socket], [], [], 0)[0]) == 0:
                 return in_data
 
     def command(self, command):
         result = self._send(2, command)
-        time.sleep(0.003) # MC-72390 （非线程安全的解决办法）
+        time.sleep(0.003)  # MC-72390 （非线程安全的解决办法）
         return result
-
-    
-
