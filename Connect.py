@@ -4,15 +4,6 @@ import getpass
 
 if __name__ == '__main__':
 
-    # mcr = MCRcon("121.41.172.247", "data708983", 1243, 2)
-    # mcr.connect()  # 连接建立
-    #
-    # atexit.register(mcr.disconnect)
-    #
-    # resp = mcr.command("list")
-    # print(resp)  # 输出
-
-    # mcr.disconnect()  # 断开连接
 
     ip = ''
     port = ''
@@ -77,13 +68,22 @@ if __name__ == '__main__':
             else: pass
 
     mcr = MCRcon(ip, pwd, int(port), 2)
-    mcr.connect()  # 连接建立
+    try:
+     mcr.connect()  # 连接建立
+    except:
+        print("\n出现错误，请重试!")
+        exit(3)
 
     atexit.register(mcr.disconnect)
 
     clearWindows()
     print("\n\033[1;37;41m Minecraft-Rcon \033[0m console v0.0.1")
+    print("\n连接成功! [ IP: "+ip+' : '+port+' ]')
     while 1:
-        resp = mcr.command(input("\n>"))
-        print(resp)  # 输出
+        try:
+            resp = mcr.command(input("\n>"))
+            print(resp)  # 输出
+        except:
+            print('\n中断链接!')
+            exit(3)
 
